@@ -1,0 +1,54 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  parity:
+    runs-on: ubuntu-latest
+
+    services:
+      db:
+        image: postgis/postgis:16-3.4
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: parcels
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d parcels"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 30
+
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/parcels
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install psql client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+
+      - name: Load schema, indexes, seed and views
+        run: |
+          for file in sql/01_schema.sql sql/02_indexes.sql sql/03_seed.sql sql/04_views.sql; do
+            echo "==> $file"
+            psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -q -f "$file"
+          done
+
+      - name: Install Python dependencies
+        run: pip install -r python/requirements.txt
+
+      - name: Legacy pipeline still runs
+        run: python python/legacy_enrichment.py --out /tmp/parcels.geojson
+
+      - name: View and legacy pipeline agree
+        run: pytest -q
